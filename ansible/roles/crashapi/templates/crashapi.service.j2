@@ -1,0 +1,12 @@
+[Unit]
+Description=Gunicorn instance to serve myflaskapp
+After=network.target
+
+[Service]
+User={{ user }}
+Group={{ group }}
+workingDirectory={{ app_dir }}
+ExecStart={{ venv_dir }}/bin/gunicorn -c {{ gunicorn_config }} app:app
+
+[Install]
+WantedBy=multi-user.target

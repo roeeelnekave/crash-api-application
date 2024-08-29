@@ -1,0 +1,65 @@
+- name: Update package lists (on Debian/Ubuntu)
+  apt:
+    update_cache: yes
+
+- name: Install Python3, pip, and venv
+  apt:
+    name: "{{ item }}"
+    state: latest
+    update_cache: yes
+  loop: "{{ packages }}"
+
+- name: Manually create the initial virtualenv
+  command: python3 -m venv "{{ venv_dir }}"
+  args:
+    creates: "{{ venv_dir }}"
+
+- name: Clone a GitHub repository
+  git:
+    repo: https://github.com/roeeelnekave/flask-crash-api.git
+    dest: "{{ app_dir }}"
+    clone: yes
+    update: yes
+
+- name: Install requirements inside the virtual environment
+  command: "{{ venv_dir }}/bin/pip install -r {{ app_dir }}/requirements.txt"
+  become: true
+
+- name: Ensure application directory exists
+  file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ group }}"
+
+- name: Ensure virtual environment directory exists
+  file:
+    path: "{{ venv_dir }}"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ group }}"
+
+- name: Create systemd service file
+  template:
+    src: crashapi.service.j2
+    dest: /etc/systemd/system/{{ service_name }}.service
+  become: true
+
+- name: Reload systemd to pick up the new service
+  systemd:
+    daemon_reload: yes
+
+- name: Start and enable the Flask app service
+  systemd:
+    name: "{{ service_name }}"
+    state: started
+    enabled: yes
+
+- name: Check status of the Flask app service
+  command: systemctl status {{ service_name }}
+  register: service_status
+  ignore_errors: yes
+
+- name: Display service status
+  debug:
+    msg: "{{ service_status.stdout_lines }}"

@@ -1,0 +1,94 @@
+---
+- name: Update system packages
+  apt:
+    update_cache: yes
+
+- name: Create a system group for Prometheus
+  group:
+    name: "{{ prometheus_group }}"
+    system: yes
+
+- name: Create a system user for Prometheus
+  user:
+    name: "{{ prometheus_user }}"
+    shell: /sbin/nologin
+    system: yes
+    group: "{{ prometheus_group }}"
+
+- name: Create directories for Prometheus
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+  loop:
+    - "{{ prometheus_config_dir }}"
+    - "{{ prometheus_data_dir }}"
+
+- name: Download Prometheus
+  get_url:
+    url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+    dest: /tmp/prometheus.tar.gz
+
+- name: Extract Prometheus
+  unarchive:
+    src: /tmp/prometheus.tar.gz
+    dest: /tmp/
+    remote_src: yes
+
+- name: Move Prometheus binaries
+  command: mv /tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }} "{{ prometheus_install_dir }}/"
+  loop:
+    - prometheus
+    - promtool
+
+- name: Remove existing console_libraries directory
+  file:
+    path: "{{ prometheus_config_dir }}/console_libraries"
+    state: absent
+    
+- name: Remove existing console directory
+  file:
+    path: "{{ prometheus_config_dir }}/consoles"
+    state: absent
+
+- name: Remove existing prometheus.yml file
+  file:
+    path: "{{ prometheus_config_dir }}/prometheus.yml"
+    state: absent
+
+- name: Move configuration files
+  command: mv /tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }} "{{ prometheus_config_dir }}/"
+  loop:
+    - prometheus.yml
+    - consoles
+    - console_libraries
+
+
+- name: Set ownership for configuration files
+  file:
+    path: "{{ prometheus_config_dir }}/{{ item }}"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    state: directory
+  loop:
+    - consoles
+    - console_libraries
+
+- name: Create Prometheus systemd service file
+  template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+  become: true
+
+- name: Reload systemd
+  command: systemctl daemon-reload
+  become: true
+
+- name: Enable and start Prometheus service
+  systemd:
+    name: prometheus
+    enabled: yes
+    state: started
+  become: true 
+

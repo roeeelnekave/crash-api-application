@@ -1,0 +1,11 @@
+---
+
+- name: Installing the flask app and creating the systemd service
+  import_tasks: install-app.yml
+
+- name: Install nginx and configure ssl 
+  import_tasks: nginx.yml
+
+- name: Installing the  node exporter and creating the systemd service
+  import_tasks: node_exporter.yml
+ 

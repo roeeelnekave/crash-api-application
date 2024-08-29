@@ -1,0 +1,43 @@
+---
+- name: Update the apt package index
+  apt:
+   update_cache: yes
+
+- name: Install Nginx and certbot
+  apt:
+    name: 
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    state: present
+
+- name: Remove nginx default configuration
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Copy Nginx configuration
+  template:
+    src: app.conf.j2
+    dest: /etc/nginx/sites-available/crash-api.conf
+
+- name: Enable Nginx configuration for Crash-api
+  file:
+    src: /etc/nginx/sites-available/crash-api.conf
+    dest: /etc/nginx/sites-enabled/crash-api.conf
+    state: link
+  become: true
+
+- name: Test Nginx configuration
+  command: nginx -t
+  become: true
+
+- name: Restart Nginx
+  service:
+    name: nginx
+    state: restarted
+    become: true
+
+- name: Obtain SSL certificate
+  shell: certbot --nginx -d crash.roeeelnekave.online --non-interactive --agree-tos --email roeeelnekave@gmail.com
+  become: true
