@@ -1,4 +1,4 @@
-# Deploying a Crash Management API with Ansible and Cloudformation and Automation Using Jenkins ECS with Jenkins Ec2 Agent
+# Deploying a Crash Management API with Ansible and Cloudformation and Automation Using Jenkins ECS with Jenkins Ec2 Agent and monitoring through Grafana, Promethues
 ### Prerequities
 
 1. Python3 and python-venv
