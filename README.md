@@ -36,7 +36,7 @@
 
 #### Repeat the process for promethues and crash api server to create elastic ip
 
-- create a `cloudformation` folder in your root directory of your project  `mkdir -p cloudformation` inside cloudformation folder.
+- create a `cloudformation` folder in your root directory of your project  `mkdir cloudformation` inside cloudformation folder.
 - To create a `main.yaml` inside the cloudformation `touch ./cloudformation/main.yaml`
 - Inside the main.yaml paste the following
 ```yaml
