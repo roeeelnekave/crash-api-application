@@ -521,7 +521,7 @@ server {
   }
 }
 ```
-**7. To create a systemd service for app, create the   `touch ./ansible/roles/crashapi/templates/crashapi.service.j2` and paste the following in `./ansible/roles/crashapi/templates/crashapi.service.j2`**
+**7. To create a systemd service for Gunicorn, create the   `touch ./ansible/roles/crashapi/templates/crashapi.service.j2` and paste the following in `./ansible/roles/crashapi/templates/crashapi.service.j2`**
 
 ```bash
 [Unit]
@@ -537,7 +537,7 @@ ExecStart={{ venv_dir }}/bin/gunicorn -c {{ gunicorn_config }} app:app
 [Install]
 WantedBy=multi-user.target
 ```
-**8. To create a systemd service for app, create the   `touch ./ansible/roles/crashapi/templates/nodeexporter.service.j2` and paste the following in `./ansible/roles/crashapi/templates/nodeexporter.service.j2`**
+**8. To create a systemd service for Node Exporter, create the   `touch ./ansible/roles/crashapi/templates/nodeexporter.service.j2` and paste the following in `./ansible/roles/crashapi/templates/nodeexporter.service.j2`**
 
 
 ```bash
