@@ -90,6 +90,9 @@ ${crashApiIp} ansible_user=ubuntu
                 dir('ansible') {
                     withCredentials([string(credentialsId: 'testkey', variable: 'testKey')]) {
                         // Display inventory
+                        def output = sh(script: 'aws cloudformation describe-stacks --stack-name grafanaPrometheus --query "Stacks[0].Outputs"', returnStdout: true).trim()
+                        def jsonOutput = readJSON(text: output)
+                        def crashApiIp = jsonOutput.find { it.OutputKey == 'CrashAppPublicIP' }.OutputValue
                         sh "cat inventory"
                         // Save private key
                         sh "echo ${testKey} > key.pem"
