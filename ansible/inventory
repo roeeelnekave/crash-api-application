@@ -1,6 +1,4 @@
 [grafana]
-100.29.106.209 ansible_user=ubuntu
-[prometheus]
-44.203.140.254 ansible_user=ubuntu 
+44.205.219.224 ansible_user=ubuntu 
 [crashapi]
-44.203.140.254 ansible_user=ubuntu
+50.16.202.54 ansible_user=ubuntu

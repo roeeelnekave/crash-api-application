@@ -10,3 +10,6 @@ packages:
   - python3
   - python3-pip
   - python3-venv
+
+crashapi_domain_name: "api.example.com"
+email_user: "roeeelnekave@gmail.com"

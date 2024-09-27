@@ -1,12 +1,38 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS EC2 Backup Policy for Production Environment
+Description: AWS EC2 Instances with EFS and Elastic IPs for Grafana, Crash API Server
+
+Parameters:
+  VPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the VPC where resources will be created
+    Default: vpc-056492ac3ce55afbc
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: The ID of the first public subnet for deploying resources
+    Default: subnet-0bf4035d161401304
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: The ID of the second public subnet for deploying resources
+    Default: subnet-0c51f5611778a305e
+
+  GrafanaEIPAllocationId:
+    Type: String
+    Description: Allocation ID for Grafana's Elastic IP
+    Default: eipalloc-0b5062fd237b05d1b
+
+  CrashAppEIPAllocationId:
+    Type: String
+    Description: Allocation ID for CrashApp's Elastic IP
+    Default: eipalloc-06814b746932fa448
 
 Resources:
   GrafanaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP to Grafana host
-      VpcId: vpc-08a64dd4d4688a77d
+      GroupDescription: Allow HTTP, HTTPS, and SSH to Grafana host
+      VpcId: !Ref VPCID
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
@@ -17,10 +43,6 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
-          FromPort: 3000
-          ToPort: 3000
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
@@ -28,37 +50,12 @@ Resources:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
 
-  PrometheusSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTP to Prometheus host
-      VpcId: vpc-08a64dd4d4688a77d
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 9090
-          ToPort: 9090
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
   CrashAppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP to Crash-App host
-      VpcId: vpc-08a64dd4d4688a77d
+      GroupDescription: Allow SSH to CrashApp host
+      VpcId: !Ref VPCID
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
@@ -66,11 +63,50 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
-  PrometheusInstance:
-    Type: AWS::EC2::Instance
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      InstanceType: t3.micro
-      ImageId: ami-0ae8f15ae66fe8cda 
+      GroupDescription: Allow NFS traffic only from Grafana and CrashApp EC2 instances
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref GrafanaSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref CrashAppSecurityGroup
+
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      Encrypted: true
+
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  GrafanaInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: EfsMountTarget1
+    Properties:
+      InstanceType: t3.medium
+      ImageId: ami-0e86e20dae9224db8
       KeyName: TestKey
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
@@ -80,43 +116,109 @@ Resources:
       NetworkInterfaces:
         - AssociatePublicIpAddress: 'true'
           DeviceIndex: '0'
-          SubnetId: subnet-082b90c734344d0e1
+          SubnetId: !Ref PublicSubnet1
           GroupSet:
-            - !Ref PrometheusSecurityGroup
-
-  EIPAssociationPromethues:
-    Type: 'AWS::EC2::EIPAssociation'
-    Properties:
-      InstanceId: !Ref PrometheusInstance
-      AllocationId: eipalloc-04eb7fe5d301399c0
+            - !Ref GrafanaSecurityGroup
+            - !Ref EFSSecurityGroup
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            exec > >(sudo tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            sudo apt-get update
+            sudo apt-get install -y nfs-common
+            sudo mkdir -p /mnt/efs
+            
+            echo "Waiting for EFS to become available..."
+            while ! sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${EFSMountTargetIP}:/ /mnt/efs; do
+              sleep 10
+              echo "Retrying EFS mount..."
+            done
+            echo "${EFSMountTargetIP}:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" | sudo tee -a /etc/fstab
+            echo "EFS mount completed."
+          - EFSMountTargetIP: !GetAtt EfsMountTarget1.IpAddress
+      Tags:
+        - Key: Name
+          Value: GrafanaServer
 
   CrashAppServer:
     Type: AWS::EC2::Instance
+    DependsOn: EfsMountTarget2
     Properties:
       InstanceType: t3.micro
-      ImageId: ami-04a81a99f5ec58529
+      ImageId: ami-0e86e20dae9224db8
       KeyName: TestKey
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
             VolumeSize: 20
-            VolumeType: gp2
+            VolumeType: gp3
       NetworkInterfaces:
         - AssociatePublicIpAddress: 'true'
           DeviceIndex: '0'
-          SubnetId: subnet-08c5127c033604fb8
+          SubnetId: !Ref PublicSubnet2
           GroupSet:
             - !Ref CrashAppSecurityGroup
+            - !Ref EFSSecurityGroup
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            exec > >(sudo tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            sudo apt-get update
+            sudo apt-get install -y nfs-common
+            sudo mkdir -p /mnt/efs
+            
+            echo "Waiting for EFS to become available..."
+            while ! sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${EFSMountTargetIP}:/ /mnt/efs; do
+              sleep 10
+              echo "Retrying EFS mount..."
+            done
+            echo "${EFSMountTargetIP}:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" | sudo tee -a /etc/fstab
+            echo "EFS mount completed."
+          - EFSMountTargetIP: !GetAtt EfsMountTarget2.IpAddress
       Tags:
         - Key: Name
-          Value: Crash-App
+          Value: CrashAppServer
 
-          
-  
   EIPAssociationGrafana:
     Type: 'AWS::EC2::EIPAssociation'
     Properties:
+      InstanceId: !Ref GrafanaInstance
+      AllocationId: !Ref GrafanaEIPAllocationId
+
+  EIPAssociationCrashApp:
+    Type: 'AWS::EC2::EIPAssociation'
+    Properties:
       InstanceId: !Ref CrashAppServer
-      AllocationId: eipalloc-xxxxxxxxxxxxx
-        
+      AllocationId: !Ref CrashAppEIPAllocationId
+
+Outputs:
+  EFSFileSystemId:
+    Description: The ID of the EFS file system
+    Value: !Ref EfsFileSystem
+  
+  GrafanaPublicDNS:
+    Description: Public DNS name of the Grafana instance
+    Value: !GetAtt GrafanaInstance.PublicDnsName
+  
+  CrashAppPublicDNS:
+    Description: Public DNS name of the CrashApp instance
+    Value: !GetAtt CrashAppServer.PublicDnsName
+
+  EFSMountTarget1IP:
+    Description: IP Address of EFS Mount Target 1
+    Value: !GetAtt EfsMountTarget1.IpAddress
+
+  EFSMountTarget2IP:
+    Description: IP Address of EFS Mount Target 2
+    Value: !GetAtt EfsMountTarget2.IpAddress
+
+  CrashAppPublicIP:
+    Description: Public IP of the CrashApp instance 
+    Value: !GetAtt CrashAppServer.PublicIp
+
+  GrafanaPublicIP:
+    Description: Public IP of the Grafana instance
+    Value: !GetAtt GrafanaInstance.PublicIp
 

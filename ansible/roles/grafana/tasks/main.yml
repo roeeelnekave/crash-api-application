@@ -121,7 +121,7 @@
   tags: restart_nginx
 
 - name: Obtain SSL certificates with Certbot
-  command: certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos --email rijanitesh78@gmail.com
+  command: certbot --nginx -d {{ grafana_domain_name }} --non-interactive --agree-tos --email {{ email_user }}
   register: certbot_result
   ignore_errors: true
   become: true

@@ -1,6 +1,6 @@
 server {
     listen 80;
-    server_name crash.roeeelnekave.online; 
+    server_name {{ }}; 
 
     location / {
         proxy_pass http://localhost:5000;  # Forward requests to Grafana

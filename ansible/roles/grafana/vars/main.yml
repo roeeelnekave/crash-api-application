@@ -7,10 +7,11 @@ packages:
   - nginx
   - certbot
   - python3-certbot-nginx
+  - nfs-common
 
 grafana:
   - grafana
   - grafana-enterprise
 
-domain_name: "grafana.example.com"
-email: "example@example.com"
+grafana_domain_name: "grafana.example.com"
+email_user: "roeeelnekave@gmail.com"

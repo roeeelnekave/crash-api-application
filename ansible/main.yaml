@@ -1,19 +1,11 @@
 ---
 - hosts: grafana
   become: true
- 
-  tasks:
-    - name: Install Grafana
-      include_role:
-        name: grafana
-        
-- hosts: prometheus
-  become: true
- 
-  tasks:
-    - name: Install Prometheus
-      include_role:
-        name: prometheus
+  roles:
+    - role: grafana
+    - role: prometheus
+
+
 
 - hosts: crashapi
   become: true

@@ -39,5 +39,5 @@
     become: true
 
 - name: Obtain SSL certificate
-  shell: certbot --nginx -d crash.roeeelnekave.online --non-interactive --agree-tos --email roeeelnekave@gmail.com
+  shell: certbot --nginx -d {{ crashapi_domain_name }} --non-interactive --agree-tos --email {{ email_user }}
   become: true
