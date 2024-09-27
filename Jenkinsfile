@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'ansible' }
+    agent any;
     
     parameters {
         string(name: 'grafana_domain_name', defaultValue: 'grafana.example.com', description: 'Grafana domain name')
