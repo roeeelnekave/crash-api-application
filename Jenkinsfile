@@ -1,5 +1,5 @@
 pipeline {
-    agent any;
+    agent any
     
     parameters {
         string(name: 'grafana_domain_name', defaultValue: 'grafana.example.com', description: 'Grafana domain name')
@@ -12,21 +12,37 @@ pipeline {
         stage("Deploy Main CloudFormation") {
             steps {
                 script {
-                    withCredentials([string(credentialsId: 'aws_access_key_id', variable: 'aws_access_key_id'), string(credentialsId: 'aws_secret_access_key', variable: 'aws_secret_access_key')]) {
-                    sh '''
-                        aws configure set aws_access_key_id $aws_access_key_id
-                        aws configure set aws_secret_access_key $aws_secret_access_key
-                        aws configure set default.region us-east-1
-                    '''
-    // some block
-                     }
-                    // Run the AWS CloudFormation create-stack command
+                    // Set AWS credentials
+                    withCredentials([string(credentialsId: 'aws_access_key_id', variable: 'aws_access_key_id'), 
+                                     string(credentialsId: 'aws_secret_access_key', variable: 'aws_secret_access_key')]) {
+                        sh '''
+                            aws configure set aws_access_key_id $aws_access_key_id
+                            aws configure set aws_secret_access_key $aws_secret_access_key
+                            aws configure set default.region us-east-1
+                        '''
+                    }
+
+                    // Fetch existing CloudFormation stack outputs
+                    def output1 = sh(script: 'aws cloudformation describe-stacks --stack-name jenkins-efs-ecs-1 --query "Stacks[0].Outputs"', returnStdout: true).trim()
+                    def jsonOutput1 = readJSON(text: output1)
+
+                    // Extract parameters from the stack outputs
+                    def VPCID = jsonOutput1.find { it.OutputKey == 'VPCID' }.OutputValue
+                    def PublicSubnet1 = jsonOutput1.find { it.OutputKey == 'PublicSubnet1ID' }.OutputValue
+                    def PublicSubnet2 = jsonOutput1.find { it.OutputKey == 'PublicSubnet2ID' }.OutputValue
+
+                    // Run AWS CloudFormation create-stack command
                     def createStack = sh(
-                        script: 'aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml',
+                        script: """
+                            aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml \
+                            --parameters ParameterKey=VPCID,ParameterValue=${VPCID} \
+                            ParameterKey=PublicSubnet1,ParameterValue=${PublicSubnet1} \
+                            ParameterKey=PublicSubnet2,ParameterValue=${PublicSubnet2}
+                        """,
                         returnStatus: true
                     )
 
-                    // Check if the create-stack command was successful
+                    // Check if CloudFormation stack creation was successful
                     if (createStack == 0) {
                         echo "CloudFormation stack creation started successfully."
 
@@ -36,10 +52,10 @@ pipeline {
                             returnStatus: true
                         )
 
-                        // Check if the wait command was successful
+                        // Check if waiting for stack creation was successful
                         if (waitForStack == 0) {
                             echo "CloudFormation stack creation completed successfully."
-                            
+
                             // Retrieve public IPs of EC2 instances from CloudFormation outputs
                             def output = sh(script: 'aws cloudformation describe-stacks --stack-name grafanaPrometheus --query "Stacks[0].Outputs"', returnStdout: true).trim()
                             def jsonOutput = readJSON(text: output)
@@ -47,18 +63,17 @@ pipeline {
                             // Extract IPs from outputs
                             def grafanaIp = jsonOutput.find { it.OutputKey == 'GrafanaPublicIP' }.OutputValue
                             def crashApiIp = jsonOutput.find { it.OutputKey == 'CrashAppPublicIP' }.OutputValue
+
+                            // Create Ansible inventory content
                             def inventoryContent = """
 [grafana]
 ${grafanaIp} ansible_user=ubuntu
 
 [crashapi]
 ${crashApiIp} ansible_user=ubuntu
-"""                      
+"""                          
                             // Write inventory to a file
-                            
-                                writeFile file: 'ansible/inventory', text: inventoryContent
-                           
-                            
+                            writeFile file: 'ansible/inventory', text: inventoryContent
 
                         } else {
                             error "Failed to wait for CloudFormation stack creation to complete."
@@ -74,11 +89,16 @@ ${crashApiIp} ansible_user=ubuntu
             steps {
                 dir('ansible') {
                     withCredentials([string(credentialsId: 'testkey', variable: 'testKey')]) {
+                        // Display inventory
                         sh "cat inventory"
+                        // Save private key
                         sh "echo ${testKey} > key.pem"
                         sh "chmod 400 key.pem"
+                        // Run Ansible playbook
                         sh """
-                            ansible-playbook -i inventory --private-key key.pem --extra-vars 'crash_api_ip=${crashApiIp} grafana_domain_name=${params.grafana_domain_name} efs_id=fs-0952230233c19bafa crashapi_domain_name=${params.crashapi_domain_name} email_user=${params.email_user}' main.yaml
+                            ansible-playbook -i inventory --private-key key.pem \
+                            --extra-vars 'crash_api_ip=${crashApiIp} grafana_domain_name=${params.grafana_domain_name} efs_id=fs-0952230233c19bafa crashapi_domain_name=${params.crashapi_domain_name} email_user=${params.email_user}' \
+                            main.yaml
                         """
                     }
                 }
