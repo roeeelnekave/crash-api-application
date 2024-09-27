@@ -88,23 +88,25 @@ ${crashApiIp} ansible_user=ubuntu
        stage("Deploy Grafana, Prometheus, and Crash API Server") {
     steps {
         dir('ansible') {
-            withCredentials([string(credentialsId: 'testkey', variable: 'testKey')]) {
+            withCredentials([sshUserPrivateKey(credentialsId: 'TestKey', keyFileVariable: 'TestKey')]) {
                 // Display inventory
                 script {
                     def output = sh(script: 'aws cloudformation describe-stacks --stack-name grafanaPrometheus --query "Stacks[0].Outputs"', returnStdout: true).trim()
                     def jsonOutput = readJSON(text: output)
                     def crashApiIp = jsonOutput.find { it.OutputKey == 'CrashAppPublicIP' }.OutputValue
-                }
+                
                 sh "cat inventory"
                 // Save private key
-                sh "echo ${testKey} > key.pem"
+                sh "echo ${TestKey} > key.pem"
                 sh "chmod 400 key.pem"
+                sh "cat key.pem"
                 // Run Ansible playbook
                 sh """
                     ansible-playbook -i inventory --private-key key.pem \
                     --extra-vars 'crash_api_ip=${crashApiIp} grafana_domain_name=${params.grafana_domain_name} efs_id=fs-0952230233c19bafa crashapi_domain_name=${params.crashapi_domain_name} email_user=${params.email_user}' \
                     main.yaml
                 """
+                }
             }
         }
     }
