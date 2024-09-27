@@ -22,7 +22,7 @@ pipeline {
                      }
                     // Run the AWS CloudFormation create-stack command
                     def createStack = sh(
-                        script: 'aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudeformation/main.yaml',
+                        script: 'aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml',
                         returnStatus: true
                     )
 
@@ -53,9 +53,12 @@ ${grafanaIp} ansible_user=ubuntu
 
 [crashapi]
 ${crashApiIp} ansible_user=ubuntu
-"""
+"""                      
                             // Write inventory to a file
-                            writeFile file: 'ansible/inventory', text: inventoryContent
+                            
+                                writeFile file: 'ansible/inventory', text: inventoryContent
+                           
+                            
 
                         } else {
                             error "Failed to wait for CloudFormation stack creation to complete."
@@ -71,6 +74,7 @@ ${crashApiIp} ansible_user=ubuntu
             steps {
                 dir('ansible') {
                     withCredentials([string(credentialsId: 'testkey', variable: 'testKey')]) {
+                        sh "cat inventory"
                         sh "echo ${testKey} > key.pem"
                         sh "chmod 400 key.pem"
                         sh """
