@@ -895,7 +895,7 @@ Outputs:
   import_tasks: nginx.yml
 ```
 
-**2. Create a file  `touch ./ansible/roles/crashapi/tasks/install-app.yml` and Paste the following to configure app in `./ansible/roles/crashapi/tasks/install-app.yml`**
+**2. Create a file  `touch ./ansible/roles/crashapi/tasks/install-app.yml` and Paste the following to configure app in `./ansible/roles/crashapi/tasks/install-app.yml`** in Clone github repository replace with your github repo url
 
 
 ```yaml
@@ -917,7 +917,7 @@ Outputs:
 
 - name: Clone a GitHub repository
   git:
-    repo: https://github.com/roeeelnekave/crash-api-application-part-2.git
+    repo: https://github.com/roeeelnekave/crash-api-application-part-2.git #Replace with your repo url
     dest: "{{ app_dir }}"
     clone: yes
     update: yes
@@ -1013,7 +1013,7 @@ Outputs:
     owner: node_exporter
     group: node_exporter
     mode: '0755'
-  remote_src: yes
+    remote_src: yes
   become: true
 
 - name: Create Node Exporter service file
@@ -1111,10 +1111,10 @@ email_user: example@example.com
 **6. To create a nginx config for app, create the   `touch ./ansible/roles/crashapi/templates/app.conf.j2` and paste the following in `./ansible/roles/crashapi/templates/app.conf.j2`**
 
 
-```conf
+```jinja
 server {
   listen 80;
-  server_name crash.roeeelnekave.online; 
+  server_name {{ crashapi_domain_name }}; 
 
   location / {
     proxy_pass http://localhost:5000;  # Forward requests to Flask app
@@ -1293,7 +1293,7 @@ WantedBy=multi-user.target
   tags: restart_nginx
 
 - name: Obtain SSL certificates with Certbot
-  command: certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos --email {{ email }}
+  command: certbot --nginx -d {{ grafana_domain_name }} --non-interactive --agree-tos --email {{ user_email }}
   register: certbot_result
   ignore_errors: true
   become: true
@@ -1317,7 +1317,7 @@ grafana:
   - grafana
   - grafana-enterprise
 
-domain_name: "grafana.example.com"
+grafana_domain_name: "grafana.example.com"
 email: "example@example.com"
 ```
 
@@ -1326,7 +1326,7 @@ email: "example@example.com"
 ```conf
 server {
     listen 80;
-    server_name {{ domain_name }};  # Replace with your domain or IP address
+    server_name {{ grafana_domain_name }};  # Replace with your domain or IP address
 
     location / {
         proxy_pass http://localhost:3000;  # Forward requests to Grafana
@@ -1618,32 +1618,83 @@ gunicorn
 1. Create a `./Jenkinsfile` inside the root directory of the project
 
 ```groovy
-pipeline{
-    agent { label 'ansible' }
-    stages{
-        stage("deploy main cloud formation")
-        {
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'grafana_domain_name', defaultValue: 'grafana.example.com', description: 'Grafana domain name')
+        string(name: 'crashapi_domain_name', defaultValue: 'api.example.com', description: 'Crash API domain name')
+        string(name: 'email_user', defaultValue: 'user@example.com', description: 'Email user')
+        string(name: 'ssh_credentials_id', defaultValue: 'your-credential-id', description: 'ID of the SSH private key credential')
+    }
+    
+    stages {
+        stage("Deploy Main CloudFormation") {
             steps {
                 script {
-                    // Run the AWS CloudFormation create-stack command
+                    // Set AWS credentials
+                    withCredentials([string(credentialsId: 'aws_access_key_id', variable: 'aws_access_key_id'), 
+                                     string(credentialsId: 'aws_secret_access_key', variable: 'aws_secret_access_key')]) {
+                        sh '''
+                            aws configure set aws_access_key_id $aws_access_key_id
+                            aws configure set aws_secret_access_key $aws_secret_access_key
+                            aws configure set default.region us-east-1
+                        '''
+                    }
+
+                    // Fetch existing CloudFormation stack outputs
+                    def output1 = sh(script: 'aws cloudformation describe-stacks --stack-name jenkins-efs-ecs-1 --query "Stacks[0].Outputs"', returnStdout: true).trim()
+                    def jsonOutput1 = readJSON(text: output1)
+
+                    // Extract parameters from the stack outputs
+                    def VPCID = jsonOutput1.find { it.OutputKey == 'VPCID' }.OutputValue
+                    def PublicSubnet1 = jsonOutput1.find { it.OutputKey == 'PublicSubnet1ID' }.OutputValue
+                    def PublicSubnet2 = jsonOutput1.find { it.OutputKey == 'PublicSubnet2ID' }.OutputValue
+
+                    // Run AWS CloudFormation create-stack command
                     def createStack = sh(
-                        script: 'aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml',
+                        script: """
+                            aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml \
+                            --parameters ParameterKey=VPCID,ParameterValue=${VPCID} \
+                            ParameterKey=PublicSubnet1,ParameterValue=${PublicSubnet1} \
+                            ParameterKey=PublicSubnet2,ParameterValue=${PublicSubnet2}
+                        """,
                         returnStatus: true
                     )
 
-                    // Check if the create-stack command was successful
+                    // Check if CloudFormation stack creation was successful
                     if (createStack == 0) {
                         echo "CloudFormation stack creation started successfully."
 
-                        // Wait for the stack creation to complete
+                        Wait for the stack creation to complete
                         def waitForStack = sh(
                             script: 'aws cloudformation wait stack-create-complete --stack-name grafanaPrometheus',
                             returnStatus: true
                         )
 
-                        // Check if the wait command was successful
+                        Check if waiting for stack creation was successful
                         if (waitForStack == 0) {
                             echo "CloudFormation stack creation completed successfully."
+
+                            // Retrieve public IPs of EC2 instances from CloudFormation outputs
+                            def output = sh(script: 'aws cloudformation describe-stacks --stack-name grafanaPrometheus --query "Stacks[0].Outputs"', returnStdout: true).trim()
+                            def jsonOutput = readJSON(text: output)
+
+                            // Extract IPs from outputs
+                            def grafanaIp = jsonOutput.find { it.OutputKey == 'GrafanaPublicIP' }.OutputValue
+                            def crashApiIp = jsonOutput.find { it.OutputKey == 'CrashAppPublicIP' }.OutputValue
+
+                            // Create Ansible inventory content
+                            def inventoryContent = """
+[grafana]
+${grafanaIp} ansible_user=ubuntu
+
+[crashapi]
+${crashApiIp} ansible_user=ubuntu
+"""                          
+                            // Write inventory to a file
+                            writeFile file: 'ansible/inventory', text: inventoryContent
+
                         } else {
                             error "Failed to wait for CloudFormation stack creation to complete."
                         }
@@ -1653,16 +1704,33 @@ pipeline{
                 }
             }
         }
-        stage("deploy grafana, promethues and crash api server")
-        {
-            steps{
-               dir('ansible'){
-                sh "chmod 400 TestKey.pem"
-                sh "ansible-playbook -i inventory --private-key TestKey.pem main.yml"
-               }
+        
+       stage("Deploy Grafana, Prometheus, and Crash API Server") {
+    steps {
+        dir('ansible') {
+            withCredentials([sshUserPrivateKey(credentialsId: 'TestKey', keyFileVariable: 'TestKey')]) {
+                // Display inventory
+                script {
+                    def output = sh(script: 'aws cloudformation describe-stacks --stack-name grafanaPrometheus --query "Stacks[0].Outputs"', returnStdout: true).trim()
+                    def jsonOutput = readJSON(text: output)
+                    def crashApiIp = jsonOutput.find { it.OutputKey == 'CrashAppPublicIP' }.OutputValue
+                
+                sh "cat inventory"
+                // Save private key
+                sh "echo ${TestKey} > key.pem"
+                sh "chmod 400 key.pem"
+                sh "cat key.pem"
+                // Run Ansible playbook
+                sh """
+                    ansible-playbook -i inventory --private-key ${TestKey} \
+                    --extra-vars 'crash_api_ip=${crashApiIp} grafana_domain_name=${params.grafana_domain_name} efs_id=fs-0952230233c19bafa crashapi_domain_name=${params.crashapi_domain_name} email_user=${params.email_user}' \
+                    main.yaml
+                """
+                }
             }
-
         }
+    }
+}
     }
 }
 ```
@@ -1672,58 +1740,16 @@ git add .
 git commit -m "Adding the required files"
 git push
 ```
-### Running the pipeline first create a ec2 to launch an ec2 
-
-## Create an AWS EC2 Instance with 15GB Storage and SSH Access
+### Running the pipeline 
 
 
 
-### Steps
 
-1. **Sign in to the AWS Management Console** and open the Amazon EC2 console at https://console.aws.amazon.com/ec2/
+### Steps Jenkins CI 
 
-2. **Choose "Launch Instance"** to start the instance creation process
 
-3. **Select "Ubuntu" as the Amazon Machine Image (AMI)**
 
-4. **Choose an instance type** like "t2.micro" that fits your needs
-5. **Choose a key pair** or either create new  if you create new key pair give it a name like `agentkey` click **Create key pair** 
-6. **Leave all to default**
 
-5. **Under "Configure Instance"**:
-   - **Keep the default network settings**
-   - **Expand "Add Storage"** and change the Size (GiB) to 15
-   - **Keep other settings as default**
-
-6. **Under "Configure Security Group"**:
-   - **Select "Create a new security group"**
-   - **Set a meaningful name and description**
-   - **Add a rule to allow SSH access** from your IP address by setting "Source" to "My IP"
-
-7. **Review your instance configuration** and click "Launch" to start the instance
-
-8. **Select the instance in the EC2 console** and click "Connect" to get the SSH command
-
-9. **Open a terminal** and run the SSH command using your key pair file replace the `ec2-198-51-100-1.compute-1.amazonaws.com` with actual ip of your ec2:
-
-```bash
-ssh -i ~/Downloads/agentkey.pem ubuntu@ec2-198-51-100-1.compute-1.amazonaws.com
-```
-
-10. **When prompted**, type "yes" to continue connecting
-
-11. **You are now connected to your Ubuntu EC2 instance** via SSH
-
-### Next Steps
-- **Update and install packages** on your instance as needed
-- **Attach additional storage volumes** or network interfaces
-- **Configure monitoring and logging**
-- **When done, remember to stop or terminate the instance** to avoid incurring charges
-
-### Troubleshooting
-- **Ensure your key pair file has the correct permissions**: `chmod 400 /path/to/key-pair.pem`
-- **Check your security group rules** allow the necessary inbound and outbound traffic
-- **Verify the instance status checks** have passed before attempting to connect
 
 #### Steps to Create Access Key and Secret Key
 1. Sign in to the AWS Management Console:
@@ -1755,49 +1781,27 @@ ssh -i ~/Downloads/agentkey.pem ubuntu@ec2-198-51-100-1.compute-1.amazonaws.com
 **Secret Access Key: This should be kept confidential and secure. If you lose it, you must create a new access key.**
 **You can have a maximum of two access keys per IAM user. If you need more, deactivate or delete existing keys.**
 
-12. **Now run the following script replace `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` values to according to access key and secret key that you have just created also we can replace `AWS_REGION`**
+## Again in AWS console
+1. Navigate to Ec2 Dashboard
+2. Click on key pairs.
+3. Create a Key pair give it a Name TestKey and Click on Create.
+4. Save it Downloads folder
+# Go to Jenkins DashBoard
+1. Go to manage jenkins -> Credentials -> Under *Stores scoped to Jenkins* click on **System** -> Global credentials (unrestricted) -> Add Credentials
+2. On **Kind** select as `SSH username with private key`
+3. On **ID** give it a unique name like `TestKey`
+4. On **Description** give it a Description like `key agent to deploy grafana, promethues and application in aws`.
+5. On **Username** give it the server username in our case it's `ubuntu`
+6. On **Private Key** section select `Enter Directly` under key click `Add` and copy the contents of the keypair `TestKey.pem` and paste it there then click on **Create** 
 
-```bash
-#!/bin/bash
-sudo apt update
-sudo apt install awscli -y
-sudo apt install python3-pip -y
-sudo apt install python3-venv -y
-sudo apt install ansible -y
-
-# Prompt for AWS credentials and region
-AWS_ACCESS_KEY_ID=AKIAXXXXXXXXXXXX
-AWS_SECRET_ACCESS_KEY=XXXXXXXXXXXXX
-AWS_REGION=us-east-1
-
-# Configure AWS CLI
-aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
-aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
-aws configure set region "$AWS_REGION"
-
-echo "AWS CLI has been configured successfully."
-```
-### Now configure your Jenkins to run the pipeline 
-
-1. Access your Jenkins server 
-2. Click on **Manage Jenkins**.
-3. Click on **Nodes**.
-4. Click on **New Nodes**.
-5. Give it a name as `ansible` and Check the Type `Permanent Agent` then click on **Create**.
-6. Add **Remote root directory** as `/home/ubuntu`.
-7. Add **Labels** as `ansible`.
-8. On **Launch method** select `Launch agents via ssh`
-9. On **Host** give the ip the agent server.
-10. On **Credentials**  click on `Add` button select `Jenkins`.
-11. On **Kind** select as `SSH username with private key`
-12. On **ID** give it a unique name like `ubuntuagent`
-13. On **Description** give it a Description like `agent to deploy grafana, promethues and application in aws`.
-14. On **Username** give it the server username in our case it's `ubuntu`
-15. On **Private Key** section select `Enter Directly` under key click `Add` and copy the contents of the keypair `agentkey.pem` and paste it there then click on **Add** 
-16. Again in **Credentials** select the `id` of credentails that you have just created.
-17. Under **Host Key Verification Strategy** select `Non verifying verification strategy`
-18. Click on **Save**
-
+ 7. Again Go to manage jenkins -> Credentials -> Under *Stores scoped to Jenkins* click on **System** -> Global credentials (unrestricted) -> Add Credentials 
+ 8. Kind select `Secret Text`
+ 9. ID `aws_access_key_id` and on secret paste the value of access key from the aws that you have just created.
+ 10. Description `access key for  aws` then click on **Create** 
+11. Again Go to manage jenkins -> Credentials -> Under *Stores scoped to Jenkins* click on **System** -> Global credentials (unrestricted) -> Add Credentials 
+ 12. Kind select `Secret Text`
+ 9. ID `aws_secret_access_key` and on secret paste the value of secret key from the aws that you have just created.
+ 10. Description `secret key for  aws` then click on **Create** 
 
 **Now lets create a pipeline to deploy our application**
 
