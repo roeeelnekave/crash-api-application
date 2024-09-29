@@ -20,6 +20,7 @@
     dest: "{{ app_dir }}"
     clone: yes
     update: yes
+  become: true
 
 - name: Install requirements inside the virtual environment
   command: "{{ venv_dir }}/bin/pip install -r {{ app_dir }}/requirements.txt"
