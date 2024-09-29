@@ -1,3 +1,572 @@
+# How to deploy this project using CloudFormation
+
+## Prerequisites
+
+1. AWS Account
+2. Basic Understanding of AWS services (VPC, EFS, ECS, IAM)
+3. Docker and Docker Compose
+4. Basic understanding of the CloudFormation template
+5. AWS CLI
+
+## STEPS
+
+# Directory
+
+```bash
+mkdir -p ./jenkins
+```
+
+
+
+- **We need a Dockerfile to customize our Jenkins image. Create a Dockerfile:**
+- Create a folder for your project and inside that folder create a file named `./jenkins/Dockerfile` and paste the following into the Dockerfile:
+
+```Dockerfile
+FROM amazonlinux:2023
+RUN yum install -y \
+    python3 \
+    python3-pip \
+    git \
+    zip \
+    unzip \
+    tar \
+    gzip \
+    wget \
+    jq \
+    openssh-server \
+    openssh-clients \
+    which \
+    findutils \
+    python3-pip && \
+    python3 -m pip install awscli && \
+    python3 -m pip install boto3 && \
+    wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo && \
+    rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key && \
+    yum upgrade -y && \
+    yum install -y fontconfig && \
+    dnf install java-17-amazon-corretto -y && \
+    yum install -y jenkins && \
+    python3 -m pip install ansible && \
+    yum clean all
+EXPOSE 8080
+CMD ["java", "-jar", "/usr/share/java/jenkins.war"]
+```
+
+- **Create a CloudFormation file for deploying our infrastructure:**
+- Create a file named `./jenkins/main.yaml` and paste the following into the YAML template one by one:
+
+   ```yaml
+   AWSTemplateFormatVersion: '2010-09-09'
+   Description: 'CloudFormation template for VPC with 3 public and 3 private subnets'
+   ```
+- Create a Parameter for Image URL of jenkins image
+```yaml
+Parameters:
+  ImageURL:
+    Type: String
+    Description: 'Image URL for the ECR repo'
+    Default: 'image-uri'
+```
+- We then create a VPC in the `Resources` section:
+
+   ```yaml
+   Resources:
+       VPC:
+           Type: AWS::EC2::VPC
+           Properties:
+               CidrBlock: 10.0.0.0/16
+               EnableDnsHostnames: true
+               EnableDnsSupport: true
+               InstanceTenancy: default
+               Tags:
+                   - Key: Name
+                     Value: project-vpc
+   ```
+
+- We then create an Internet Gateway and Internet Gateway attachment:
+
+   ```yaml
+       InternetGateway:
+           Type: AWS::EC2::InternetGateway
+       InternetGatewayAttachment:
+           Type: AWS::EC2::VPCGatewayAttachment
+           Properties:
+               VpcId: !Ref VPC
+               InternetGatewayId: !Ref InternetGateway
+   ```
+
+- We create 3 Public Subnets and 3 Private Subnets for the VPC for EFS and ECS to be available in different AZs:
+
+   ```yaml
+       PublicSubnet1:
+           Type: AWS::EC2::Subnet
+           Properties:
+               VpcId: !Ref VPC
+               AvailabilityZone: !Select [ 0, !GetAZs '' ]
+               CidrBlock: 10.0.1.0/24
+               MapPublicIpOnLaunch: true
+               Tags:
+                   - Key: Name
+                     Value: project-subnet-public1-us-east-1a
+       PublicSubnet2:
+           Type: AWS::EC2::Subnet
+           Properties:
+               VpcId: !Ref VPC
+               AvailabilityZone: !Select [ 1, !GetAZs '' ]
+               CidrBlock: 10.0.2.0/24
+               MapPublicIpOnLaunch: true
+               Tags:
+                   - Key: Name
+                     Value: project-subnet-public2-us-east-1b
+       PublicSubnet3:
+           Type: AWS::EC2::Subnet
+           Properties:
+               VpcId: !Ref VPC
+               AvailabilityZone: !Select [ 2, !GetAZs '' ]
+               CidrBlock: 10.0.3.0/24
+               MapPublicIpOnLaunch: true
+               Tags:
+                   - Key: Name
+                     Value: project-subnet-public3-us-east-1c
+       PrivateSubnet1:
+           Type: AWS::EC2::Subnet
+           Properties:
+               VpcId: !Ref VPC
+               AvailabilityZone: !Select [ 0, !GetAZs '' ]
+               CidrBlock: 10.0.4.0/24
+               MapPublicIpOnLaunch: false
+               Tags:
+                   - Key: Name
+                     Value: project-subnet-private1-us-east-1a
+       PrivateSubnet2:
+           Type: AWS::EC2::Subnet
+           Properties:
+               VpcId: !Ref VPC
+               AvailabilityZone: !Select [ 1, !GetAZs '' ]
+               CidrBlock: 10.0.5.0/24
+               MapPublicIpOnLaunch: false
+               Tags:
+                   - Key: Name
+                     Value: project-subnet-private2-us-east-1b
+       PrivateSubnet3:
+           Type: AWS::EC2::Subnet
+           Properties:
+               VpcId: !Ref VPC
+               AvailabilityZone: !Select [ 2, !GetAZs '' ]
+               CidrBlock: 10.0.6.0/24
+               MapPublicIpOnLaunch: false
+               Tags:
+                   - Key: Name
+                     Value: project-subnet-private3-us-east-1c
+   ```
+
+- We are creating a Public Route Table and its association for the Public Subnet:
+
+   ```yaml
+       PublicRouteTable:
+           Type: AWS::EC2::RouteTable
+           Properties:
+               VpcId: !Ref VPC
+               Tags:
+                   - Key: Name
+                     Value: project-rtb-public
+       DefaultPublicRoute:
+           Type: AWS::EC2::Route
+           DependsOn: InternetGatewayAttachment
+           Properties:
+               RouteTableId: !Ref PublicRouteTable
+               DestinationCidrBlock: 0.0.0.0/0
+               GatewayId: !Ref InternetGateway
+       PublicSubnet1RouteTableAssociation:
+           Type: AWS::EC2::SubnetRouteTableAssociation
+           Properties:
+               RouteTableId: !Ref PublicRouteTable
+               SubnetId: !Ref PublicSubnet1
+       PublicSubnet2RouteTableAssociation:
+           Type: AWS::EC2::SubnetRouteTableAssociation
+           Properties:
+               RouteTableId: !Ref PublicRouteTable
+               SubnetId: !Ref PublicSubnet2
+       PublicSubnet3RouteTableAssociation:
+           Type: AWS::EC2::SubnetRouteTableAssociation
+           Properties:
+               RouteTableId: !Ref PublicRouteTable
+               SubnetId: !Ref PublicSubnet3
+   ```
+
+- We create a NAT Gateway for the EIP and its association for the public subnet and Internet Gateway:
+
+   ```yaml
+       NATGateway1:
+           Type: AWS::EC2::NatGateway
+           Properties:
+               AllocationId: !GetAtt NATGateway1EIP.AllocationId
+               SubnetId: !Ref PublicSubnet1
+       NATGateway1EIP:
+           Type: AWS::EC2::EIP
+           DependsOn: InternetGatewayAttachment
+           Properties:
+               Domain: vpc
+   ```
+
+- Now we create a NAT Gateway and its association for the Private Subnet:
+
+   ```yaml
+       PrivateRouteTable1:
+           Type: AWS::EC2::RouteTable
+           Properties:
+               VpcId: !Ref VPC
+               Tags:
+                   - Key: Name
+                     Value: project-rtb-private1-us-east-1a
+       DefaultPrivateRoute1:
+           Type: AWS::EC2::Route
+           Properties:
+               RouteTableId: !Ref PrivateRouteTable1
+               DestinationCidrBlock: 0.0.0.0/0
+               NatGatewayId: !Ref NATGateway1
+       PrivateSubnet1RouteTableAssociation:
+           Type: AWS::EC2::SubnetRouteTableAssociation
+           Properties:
+               RouteTableId: !Ref PrivateRouteTable1
+               SubnetId: !Ref PrivateSubnet1
+   ```
+
+   (Repeat similar blocks for PrivateRouteTable2 and PrivateRouteTable3)
+
+- We will be creating the ECS and EFS security group and associate it with the VPC that we have just created. We will be opening port `8080` on the ECS security group for Jenkins and `2049` for the ECS Security group for the NFS file system of EFS, allowing `ALL` traffic in outbound:
+
+   ```yaml
+       ECSSecurityGroup:
+           Type: AWS::EC2::SecurityGroup
+           Properties:
+               GroupDescription: "ECS Security Group"
+               VpcId: !Ref VPC
+               SecurityGroupIngress:
+                   - IpProtocol: tcp
+                     FromPort: 8080
+                     ToPort: 8080
+                     CidrIp: 0.0.0.0/0
+               SecurityGroupEgress:
+                   - IpProtocol: "-1"
+                     CidrIp: 0.0.0.0/0
+       EFSSecurityGroup:
+           Type: AWS::EC2::SecurityGroup
+           Properties:
+               GroupDescription: "EFS Security Group"
+               VpcId: !Ref VPC
+               SecurityGroupIngress:
+                   - IpProtocol: tcp
+                     FromPort: 2049
+                     ToPort: 2049
+                     SourceSecurityGroupId: !Ref ECSSecurityGroup
+               SecurityGroupEgress:
+                   - IpProtocol: "-1"
+                     CidrIp: 0.0.0.0/0
+   ```
+- We will be creating  IAM policies and role for the ecs to execute  and efs mount 
+```yaml
+
+  # Policy for ECS Task
+  ECSTaskPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ecstaskpolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "*"
+      Roles:
+        - !Ref ECSEFSmountTaskRole
+
+  # Policy for EFS Mount
+  EFSMountPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: efsmountpolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowDescribe
+            Effect: Allow
+            Action:
+              - elasticfilesystem:DescribeAccessPoints
+              - elasticfilesystem:DescribeFileSystems
+              - elasticfilesystem:DescribeMountTargets
+              - ec2:DescribeAvailabilityZones
+            Resource: "*"
+          - Sid: AllowCreateAccessPoint
+            Effect: Allow
+            Action:
+              - elasticfilesystem:CreateAccessPoint
+            Resource: "*"
+            Condition:
+              Null:
+                aws:RequestTag/efs.csi.aws.com/cluster: false
+              ForAllValues:StringEquals:
+                aws:TagKeys: efs.csi.aws.com/cluster
+          - Sid: AllowTagNewAccessPoints
+            Effect: Allow
+            Action:
+              - elasticfilesystem:TagResource
+            Resource: "*"
+            Condition:
+              StringEquals:
+                elasticfilesystem:CreateAction: CreateAccessPoint
+              Null:
+                aws:RequestTag/efs.csi.aws.com/cluster: false
+              ForAllValues:StringEquals:
+                aws:TagKeys: efs.csi.aws.com/cluster
+          - Sid: AllowDeleteAccessPoint
+            Effect: Allow
+            Action: elasticfilesystem:DeleteAccessPoint
+            Resource: "*"
+            Condition:
+              Null:
+                aws:ResourceTag/efs.csi.aws.com/cluster: false
+      Roles:
+        - !Ref ECSEFSmountTaskRole
+
+  # IAM Role for ECS Tasks
+  ECSEFSmountTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ECSEFSmountTaskRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSTaskPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*" 
+```
+- We will be creating the EFS file system:
+
+   ```yaml
+       EFSSystem:
+           Type: AWS::EFS::FileSystem
+           Properties:
+               Encrypted: true
+               FileSystemTags:
+                   - Key: Name
+                     Value: JenkinsEFS
+   ```
+
+- We need to mount the target for the EFS. For that, we will be using the public subnets `1, 2, 3` that we have just created:
+
+   ```yaml
+       JenkinsHomeVolume1:
+           Type: AWS::EFS::MountTarget
+           Properties:
+               FileSystemId: !Ref EFSSystem
+               SubnetId: !Ref PublicSubnet1
+               SecurityGroups:
+                   - !Ref EFSSecurityGroup
+       JenkinsHomeVolume2:
+           Type: AWS::EFS::MountTarget
+           Properties:
+               FileSystemId: !Ref EFSSystem
+               SubnetId: !Ref PublicSubnet2
+               SecurityGroups:
+                   - !Ref EFSSecurityGroup
+       JenkinsHomeVolume3:
+           Type: AWS::EFS::MountTarget
+           Properties:
+               FileSystemId: !Ref EFSSystem
+               SubnetId: !Ref PublicSubnet3
+               SecurityGroups:
+                   - !Ref EFSSecurityGroup
+   ```
+
+- We create an ECS cluster for our application:
+
+   ```yaml
+       ECSCluster:
+           Type: AWS::ECS::Cluster
+           Properties:
+               ClusterName: JenkinsCluster
+               CapacityProviders:
+                   - FARGATE
+                   - FARGATE_SPOT
+               DefaultCapacityProviderStrategy:
+                   - CapacityProvider: FARGATE
+                     Weight: 1
+                   - CapacityProvider: FARGATE_SPOT
+                     Weight: 1
+               Configuration:
+                   ExecuteCommandConfiguration:
+                       Logging: DEFAULT
+   ```
+
+- Create a Log group to fetch the log stream of EFS:
+
+   ```yaml
+       ECSLogGroup:
+           Type: AWS::Logs::LogGroup
+           Properties:
+               LogGroupName: !Sub "/ecs/test-${AWS::StackName}"
+               RetentionInDays: 7
+      
+   ```
+
+- **Now we are creating the ECS task definition. Comment the *CpuArchitecture* if you are using intel or amd chip (64-bit)** 
+   ```yaml
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ExecutionRoleArn: !Ref ECSEFSmountTaskRole
+      TaskRoleArn: !Ref ECSEFSmountTaskRole
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: ARM64
+      Family: my-jenkins-task-00
+      Cpu: "1024"
+      Memory: "2048"
+      ContainerDefinitions:
+        - Name: jenkins
+          Image: !Ref ImageURL
+          Cpu: 1024
+          Memory: 2048
+          MemoryReservation: 1024
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          LinuxParameters:
+            InitProcessEnabled: true
+          MountPoints:
+            - SourceVolume: efs-volume
+              ContainerPath: /root/.jenkins
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              mode: non-blocking
+              max-buffer-size: 25m
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: us-east-1
+              awslogs-create-group: "true"
+              awslogs-stream-prefix: efs-task
+      Volumes:
+        - Name: efs-volume
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EFSSystem
+            RootDirectory: /
+            TransitEncryption: ENABLED
+
+- Create a ecs service
+```yaml
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster  
+      TaskDefinition: !Ref ECSTaskDefinition
+      LaunchType: FARGATE
+      ServiceName: ebs
+      SchedulingStrategy: REPLICA
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: 
+            - !Ref ECSSecurityGroup
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+            - !Ref PublicSubnet3
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DeploymentController:
+        Type: ECS
+      Tags: []
+      EnableECSManagedTags: true
+  Outputs:
+    VPCID:
+      Description: The ID of the created VPC
+      Value: !Ref VPC
+
+    PublicSubnet1ID:
+      Description: The ID of Public Subnet 1
+      Value: !Ref PublicSubnet1
+
+    PublicSubnet2ID:
+      Description: The ID of Public Subnet 2
+      Value: !Ref PublicSubnet2
+```
+**Create the bash script and update the Repository Name, aws region and stack name if you desire and  `./jenkins/bash-script.sh` required**
+
+```bash
+#!/bin/bash
+
+# update the stack name
+STACK_NAME="jenkins-efs-ecs-1"
+# update to your desired aws region
+AWS_REGION="us-east-1"
+
+# Set or update the repository name
+REPOSITORY_NAME="jenkins"
+
+# Set the image tag
+IMAGE_TAG="latest"
+
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output --region $AWS_REGION)
+# Create the ECR repository
+aws ecr describe-repositories --repository-names "${REPOSITORY_NAME}" --region $AWS_REGION > /dev/null 2>&1
+if [ $? -ne 0 ]
+then
+    aws ecr create-repository --repository-name "${REPOSITORY_NAME}" --region $AWS_REGION > /dev/null
+fi
+
+
+# Build the Docker image
+docker build -t $REPOSITORY_NAME:$IMAGE_TAG .
+
+# Get the ECR login command
+LOGIN_COMMAND=$(aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com)
+# Push the image to ECR
+docker tag $REPOSITORY_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPOSITORY_NAME:$IMAGE_TAG
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPOSITORY_NAME:$IMAGE_TAG
+IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPOSITORY_NAME}:${IMAGE_TAG}"
+
+aws cloudformation update-stack \
+  --stack-name "${STACK_NAME}" \
+  --template-body file://main.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=ImageURL,ParameterValue="${IMAGE_URI}" \
+  --region "${AWS_REGION}"
+```
+
+- Go to the AWS Console Dashboard navigate to Cloudformation and click on `jenkins-ecs-efs` see the creation process after stack creation is complete go to ecs click on service and click on task access jenkins with the public ip:8080
 # Deploying a Crash Management API with Ansible and Cloudformation and Automation Using Jenkins ECS with Jenkins Ec2 Agent and monitoring through Grafana, Promethues
 ### Prerequities
 
@@ -43,75 +612,42 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: AWS EC2 Backup Policy for Production Environment
 
+Parameters:
+  VPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the VPC where resources will be created
+    Default: vpc-056492ac3ce55afbc
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: The ID of the first public subnet for deploying resources
+    Default: subnet-0bf4035d161401304
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: The ID of the second public subnet for deploying resources
+    Default: subnet-0c51f5611778a305e
+
+  GrafanaEIPAllocationId:
+    Type: String
+    Description: Allocation ID for Grafana's Elastic IP
+    Default: eipalloc-0b5062fd237b05d1b
+
+  CrashAppEIPAllocationId:
+    Type: String
+    Description: Allocation ID for CrashApp's Elastic IP
+    Default: eipalloc-06814b746932fa448
 ```
 
 - To create the security group and open the required port for grafana promethues and application paste the following in `main.yaml` don't forget to replace the vpc id in `VpcId`
 ```yaml
+Resources:
   GrafanaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP to Grafana host
-      # replace the vpc id
-      VpcId: vpc-08a64dd4d4688a77d
+      GroupDescription: Allow HTTP, HTTPS, and SSH to Grafana host
+      VpcId: !Ref VPCID
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3000
-          ToPort: 3000
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-
-  PrometheusSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTP to Prometheus host
-      # replace the vpc id
-      VpcId: vpc-08a64dd4d4688a77d
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 9090
-          ToPort: 9090
-          SourceSecurityGroupId: !Ref GrafanaSecurityGroup
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
-
-  AppSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTP to Api app host
-      # replace the vpc id
-      VpcId: vpc-08a64dd4d4688a77d
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 5000
-          ToPort: 5000
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 9100
-          ToPort: 9100
-          SourceSecurityGroupId: !Ref PrometheusSecurityGroup
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
@@ -120,21 +656,20 @@ Description: AWS EC2 Backup Policy for Production Environment
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
   CrashAppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP to Crash-App host
-      # replace the vpc id
-      VpcId: vpc-08a64dd4d4688a77d
+      GroupDescription: Allow SSH to CrashApp host
+      VpcId: !Ref VPCID
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
@@ -142,42 +677,55 @@ Description: AWS EC2 Backup Policy for Production Environment
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS traffic only from Grafana and CrashApp EC2 instances
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref GrafanaSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref CrashAppSecurityGroup
 ```
 
 - To create the ec2 instances for grafana, promethues and flask app  paste the following in `main.yaml` don't forget to replace the elastic ip allocation id in `AllocationId` and replace with the public subnet id that you have in your vpc
 
 ```yaml
-  PrometheusInstance:
-    Type: AWS::EC2::Instance
-    Properties:
-      InstanceType: t3.micro
-      ImageId: ami-0ae8f15ae66fe8cda 
-      KeyName: TestKey
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: 20
-            VolumeType: gp2
-      NetworkInterfaces:
-        - AssociatePublicIpAddress: 'true'
-          DeviceIndex: '0'
-          # replace the public from your vpc subnet id 
-          SubnetId: subnet-082b90c734344d0e1
-          GroupSet:
-            - !Ref PrometheusSecurityGroup
 
-  EIPAssociationPromethues:
-    Type: 'AWS::EC2::EIPAssociation'
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
     Properties:
-      InstanceId: !Ref PrometheusInstance
-      # replace your elastic ip allocation  id here
-      AllocationId: eipalloc-04eb7fe5d301399c0
+      PerformanceMode: generalPurpose
+      Encrypted: true
+
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
 
   GrafanaInstance:
     Type: AWS::EC2::Instance
+    DependsOn: EfsMountTarget1
     Properties:
-      InstanceType: t3.micro
-      ImageId: ami-04a81a99f5ec58529
+      InstanceType: t3.medium
+      ImageId: ami-0e86e20dae9224db8
       KeyName: TestKey
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
@@ -187,49 +735,111 @@ Description: AWS EC2 Backup Policy for Production Environment
       NetworkInterfaces:
         - AssociatePublicIpAddress: 'true'
           DeviceIndex: '0'
-          # replace the public from your vpc subnet id
-          SubnetId: subnet-08c5127c033604fb8
+          SubnetId: !Ref PublicSubnet1
           GroupSet:
             - !Ref GrafanaSecurityGroup
+            - !Ref EFSSecurityGroup
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            exec > >(sudo tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            sudo apt-get update
+            sudo apt-get install -y nfs-common
+            sudo mkdir -p /mnt/efs
+            
+            echo "Waiting for EFS to become available..."
+            while ! sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${EFSMountTargetIP}:/ /mnt/efs; do
+              sleep 10
+              echo "Retrying EFS mount..."
+            done
+            echo "${EFSMountTargetIP}:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" | sudo tee -a /etc/fstab
+            echo "EFS mount completed."
+          - EFSMountTargetIP: !GetAtt EfsMountTarget1.IpAddress
       Tags:
         - Key: Name
-          Value: Grafana
-  
+          Value: GrafanaServer
+
+  CrashAppServer:
+    Type: AWS::EC2::Instance
+    DependsOn: EfsMountTarget2
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0e86e20dae9224db8
+      KeyName: TestKey
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          SubnetId: !Ref PublicSubnet2
+          GroupSet:
+            - !Ref CrashAppSecurityGroup
+            - !Ref EFSSecurityGroup
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            exec > >(sudo tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            sudo apt-get update
+            sudo apt-get install -y nfs-common
+            sudo mkdir -p /mnt/efs
+            
+            echo "Waiting for EFS to become available..."
+            while ! sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${EFSMountTargetIP}:/ /mnt/efs; do
+              sleep 10
+              echo "Retrying EFS mount..."
+            done
+            echo "${EFSMountTargetIP}:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" | sudo tee -a /etc/fstab
+            echo "EFS mount completed."
+          - EFSMountTargetIP: !GetAtt EfsMountTarget2.IpAddress
+      Tags:
+        - Key: Name
+          Value: CrashAppServer
+
   EIPAssociationGrafana:
     Type: 'AWS::EC2::EIPAssociation'
     Properties:
       InstanceId: !Ref GrafanaInstance
-       # replace your elastic ip allocation  id here
-      AllocationId: eipalloc-029f173a1a1df9837
+      AllocationId: !Ref GrafanaEIPAllocationId
 
-  CrashAppServer:
-    Type: AWS::EC2::Instance
-    Properties:
-      InstanceType: t3.micro
-      ImageId: ami-04a81a99f5ec58529
-      KeyName: TestKey
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: 20
-            VolumeType: gp2
-      NetworkInterfaces:
-        - AssociatePublicIpAddress: 'true'
-          DeviceIndex: '0'
-          # replace the public from your vpc subnet id
-          SubnetId: subnet-08c5127c033604fb8
-          GroupSet:
-            - !Ref CrashAppSecurityGroup
-      Tags:
-        - Key: Name
-          Value: Crash-App
-  
-  EIPAssociationGrafana:
+  EIPAssociationCrashApp:
     Type: 'AWS::EC2::EIPAssociation'
     Properties:
       InstanceId: !Ref CrashAppServer
-       # replace your elastic ip allocation  id here
-      AllocationId: eipalloc-xxxxxxxxxxxxx
+      AllocationId: !Ref CrashAppEIPAllocationId
+
+Outputs:
+  EFSFileSystemId:
+    Description: The ID of the EFS file system
+    Value: !Ref EfsFileSystem
+  
+  GrafanaPublicDNS:
+    Description: Public DNS name of the Grafana instance
+    Value: !GetAtt GrafanaInstance.PublicDnsName
+  
+  CrashAppPublicDNS:
+    Description: Public DNS name of the CrashApp instance
+    Value: !GetAtt CrashAppServer.PublicDnsName
+
+  EFSMountTarget1IP:
+    Description: IP Address of EFS Mount Target 1
+    Value: !GetAtt EfsMountTarget1.IpAddress
+
+  EFSMountTarget2IP:
+    Description: IP Address of EFS Mount Target 2
+    Value: !GetAtt EfsMountTarget2.IpAddress
+
+  CrashAppPublicIP:
+    Description: Public IP of the CrashApp instance 
+    Value: !GetAtt CrashAppServer.PublicIp
+
+  GrafanaPublicIP:
+    Description: Public IP of the Grafana instance
+    Value: !GetAtt GrafanaInstance.PublicIp
               
 ```
 
@@ -254,19 +864,11 @@ Description: AWS EC2 Backup Policy for Production Environment
 ---
 - hosts: grafana
   become: true
- 
-  tasks:
-    - name: Install Grafana
-      include_role:
-        name: grafana
-        
-- hosts: prometheus
-  become: true
- 
-  tasks:
-    - name: Install Prometheus
-      include_role:
-        name: prometheus
+  roles:
+    - role: grafana
+    - role: prometheus
+
+
 
 - hosts: crashapi
   become: true
@@ -315,7 +917,7 @@ Description: AWS EC2 Backup Policy for Production Environment
 
 - name: Clone a GitHub repository
   git:
-    repo: https://github.com/roeeelnekave/flask-crash-api.git
+    repo: https://github.com/roeeelnekave/crash-api-application-part-2.git
     dest: "{{ app_dir }}"
     clone: yes
     update: yes
@@ -482,7 +1084,7 @@ Description: AWS EC2 Backup Policy for Production Environment
   become: true
 
 - name: Obtain SSL certificate
-  shell: certbot --nginx -d crash.roeeelnekave.online --non-interactive --agree-tos --email roeeelnekave@gmail.com
+  shell: certbot --nginx -d {{ crashapi_domain_name}} --non-interactive --agree-tos --email {{ email_user }}
   become: true
 ```
 
@@ -502,6 +1104,8 @@ packages:
   - python3
   - python3-pip
   - python3-venv
+crashapi_domain_name: "crashapi.example.com"
+email_user: example@example.com
 ```
 
 **6. To create a nginx config for app, create the   `touch ./ansible/roles/crashapi/templates/app.conf.j2` and paste the following in `./ansible/roles/crashapi/templates/app.conf.j2`**
