@@ -16,7 +16,7 @@
 
 - name: Clone a GitHub repository
   git:
-    repo: https://github.com/roeeelnekave/flask-crash-api.git
+    repo: https://github.com/roeeelnekave/crash-api-application-part-2.git
     dest: "{{ app_dir }}"
     clone: yes
     update: yes
