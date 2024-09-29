@@ -1,9 +1,9 @@
 ---
-- hosts: grafana
-  become: true
-  roles:
-    - role: grafana
-    - role: prometheus
+# - hosts: grafana
+#   become: true
+#   roles:
+#     - role: grafana
+#     - role: prometheus
 
 
 
