@@ -23,38 +23,38 @@ pipeline {
                     }
 
                     // Fetch existing CloudFormation stack outputs
-                    // def output1 = sh(script: 'aws cloudformation describe-stacks --stack-name jenkins-efs-ecs-1 --query "Stacks[0].Outputs"', returnStdout: true).trim()
-                    // def jsonOutput1 = readJSON(text: output1)
+                    def output1 = sh(script: 'aws cloudformation describe-stacks --stack-name jenkins-efs-ecs-1 --query "Stacks[0].Outputs"', returnStdout: true).trim()
+                    def jsonOutput1 = readJSON(text: output1)
 
-                    // // Extract parameters from the stack outputs
-                    // def VPCID = jsonOutput1.find { it.OutputKey == 'VPCID' }.OutputValue
-                    // def PublicSubnet1 = jsonOutput1.find { it.OutputKey == 'PublicSubnet1ID' }.OutputValue
-                    // def PublicSubnet2 = jsonOutput1.find { it.OutputKey == 'PublicSubnet2ID' }.OutputValue
+                    // Extract parameters from the stack outputs
+                    def VPCID = jsonOutput1.find { it.OutputKey == 'VPCID' }.OutputValue
+                    def PublicSubnet1 = jsonOutput1.find { it.OutputKey == 'PublicSubnet1ID' }.OutputValue
+                    def PublicSubnet2 = jsonOutput1.find { it.OutputKey == 'PublicSubnet2ID' }.OutputValue
 
                     // Run AWS CloudFormation create-stack command
-                    // def createStack = sh(
-                    //     script: """
-                    //         aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml \
-                    //         --parameters ParameterKey=VPCID,ParameterValue=${VPCID} \
-                    //         ParameterKey=PublicSubnet1,ParameterValue=${PublicSubnet1} \
-                    //         ParameterKey=PublicSubnet2,ParameterValue=${PublicSubnet2}
-                    //     """,
-                    //     returnStatus: true
-                    // )
+                    def createStack = sh(
+                        script: """
+                            aws cloudformation create-stack --stack-name grafanaPrometheus --template-body file://cloudformation/main.yaml \
+                            --parameters ParameterKey=VPCID,ParameterValue=${VPCID} \
+                            ParameterKey=PublicSubnet1,ParameterValue=${PublicSubnet1} \
+                            ParameterKey=PublicSubnet2,ParameterValue=${PublicSubnet2}
+                        """,
+                        returnStatus: true
+                    )
 
                     // Check if CloudFormation stack creation was successful
-                    // if (createStack == 0) {
-                    //     echo "CloudFormation stack creation started successfully."
+                    if (createStack == 0) {
+                        echo "CloudFormation stack creation started successfully."
 
-                        // Wait for the stack creation to complete
-                        // def waitForStack = sh(
-                        //     script: 'aws cloudformation wait stack-create-complete --stack-name grafanaPrometheus',
-                        //     returnStatus: true
-                        // )
+                        Wait for the stack creation to complete
+                        def waitForStack = sh(
+                            script: 'aws cloudformation wait stack-create-complete --stack-name grafanaPrometheus',
+                            returnStatus: true
+                        )
 
-                        // Check if waiting for stack creation was successful
-                        // if (waitForStack == 0) {
-                        //     echo "CloudFormation stack creation completed successfully."
+                        Check if waiting for stack creation was successful
+                        if (waitForStack == 0) {
+                            echo "CloudFormation stack creation completed successfully."
 
                             // Retrieve public IPs of EC2 instances from CloudFormation outputs
                             def output = sh(script: 'aws cloudformation describe-stacks --stack-name grafanaPrometheus --query "Stacks[0].Outputs"', returnStdout: true).trim()
@@ -75,12 +75,12 @@ ${crashApiIp} ansible_user=ubuntu
                             // Write inventory to a file
                             writeFile file: 'ansible/inventory', text: inventoryContent
 
-                    //     } else {
-                    //         error "Failed to wait for CloudFormation stack creation to complete."
-                    //     }
-                    // } else {
-                    //     error "Failed to create CloudFormation stack."
-                    // }
+                        } else {
+                            error "Failed to wait for CloudFormation stack creation to complete."
+                        }
+                    } else {
+                        error "Failed to create CloudFormation stack."
+                    }
                 }
             }
         }
