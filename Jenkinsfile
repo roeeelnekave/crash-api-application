@@ -102,7 +102,7 @@ ${crashApiIp} ansible_user=ubuntu
                 sh "cat key.pem"
                 // Run Ansible playbook
                 sh """
-                    ansible-playbook -i inventory --private-key key.pem \
+                    ansible-playbook -i inventory --private-key ${TestKey} \
                     --extra-vars 'crash_api_ip=${crashApiIp} grafana_domain_name=${params.grafana_domain_name} efs_id=fs-0952230233c19bafa crashapi_domain_name=${params.crashapi_domain_name} email_user=${params.email_user}' \
                     main.yaml
                 """
