@@ -817,13 +817,6 @@ Outputs:
     Description: The ID of the EFS file system
     Value: !Ref EfsFileSystem
   
-  GrafanaPublicDNS:
-    Description: Public DNS name of the Grafana instance
-    Value: !GetAtt GrafanaInstance.PublicDnsName
-  
-  CrashAppPublicDNS:
-    Description: Public DNS name of the CrashApp instance
-    Value: !GetAtt CrashAppServer.PublicDnsName
 
   EFSMountTarget1IP:
     Description: IP Address of EFS Mount Target 1
