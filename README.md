@@ -53,225 +53,246 @@ CMD ["java", "-jar", "/usr/share/java/jenkins.war"]
 ```
 
 - **Create a CloudFormation file for deploying our infrastructure:**
-- Create a file named `./jenkins/main.yaml` and paste the following into the YAML template one by one:
+- Create a file named `./jenkins/main.yaml` and paste the following into the YAML template to create a deploy the infrastructure this will create VPC, IGW, ECS, IAM:
 
-   ```yaml
-   AWSTemplateFormatVersion: '2010-09-09'
-   Description: 'CloudFormation template for VPC with 3 public and 3 private subnets'
-   ```
-- Create a Parameter for Image URL of jenkins image
 ```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for VPC with 3 public and 3 private subnets'
 Parameters:
   ImageURL:
     Type: String
     Description: 'Image URL for the ECR repo'
-    Default: 'image-uri'
-```
-- We then create a VPC in the `Resources` section:
 
-   ```yaml
-   Resources:
-       VPC:
-           Type: AWS::EC2::VPC
-           Properties:
-               CidrBlock: 10.0.0.0/16
-               EnableDnsHostnames: true
-               EnableDnsSupport: true
-               InstanceTenancy: default
-               Tags:
-                   - Key: Name
-                     Value: project-vpc
-   ```
 
-- We then create an Internet Gateway and Internet Gateway attachment:
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: project-vpc
 
-   ```yaml
-       InternetGateway:
-           Type: AWS::EC2::InternetGateway
-       InternetGatewayAttachment:
-           Type: AWS::EC2::VPCGatewayAttachment
-           Properties:
-               VpcId: !Ref VPC
-               InternetGatewayId: !Ref InternetGateway
-   ```
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
 
-- We create 3 Public Subnets and 3 Private Subnets for the VPC for EFS and ECS to be available in different AZs:
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
 
-   ```yaml
-       PublicSubnet1:
-           Type: AWS::EC2::Subnet
-           Properties:
-               VpcId: !Ref VPC
-               AvailabilityZone: !Select [ 0, !GetAZs '' ]
-               CidrBlock: 10.0.1.0/24
-               MapPublicIpOnLaunch: true
-               Tags:
-                   - Key: Name
-                     Value: project-subnet-public1-us-east-1a
-       PublicSubnet2:
-           Type: AWS::EC2::Subnet
-           Properties:
-               VpcId: !Ref VPC
-               AvailabilityZone: !Select [ 1, !GetAZs '' ]
-               CidrBlock: 10.0.2.0/24
-               MapPublicIpOnLaunch: true
-               Tags:
-                   - Key: Name
-                     Value: project-subnet-public2-us-east-1b
-       PublicSubnet3:
-           Type: AWS::EC2::Subnet
-           Properties:
-               VpcId: !Ref VPC
-               AvailabilityZone: !Select [ 2, !GetAZs '' ]
-               CidrBlock: 10.0.3.0/24
-               MapPublicIpOnLaunch: true
-               Tags:
-                   - Key: Name
-                     Value: project-subnet-public3-us-east-1c
-       PrivateSubnet1:
-           Type: AWS::EC2::Subnet
-           Properties:
-               VpcId: !Ref VPC
-               AvailabilityZone: !Select [ 0, !GetAZs '' ]
-               CidrBlock: 10.0.4.0/24
-               MapPublicIpOnLaunch: false
-               Tags:
-                   - Key: Name
-                     Value: project-subnet-private1-us-east-1a
-       PrivateSubnet2:
-           Type: AWS::EC2::Subnet
-           Properties:
-               VpcId: !Ref VPC
-               AvailabilityZone: !Select [ 1, !GetAZs '' ]
-               CidrBlock: 10.0.5.0/24
-               MapPublicIpOnLaunch: false
-               Tags:
-                   - Key: Name
-                     Value: project-subnet-private2-us-east-1b
-       PrivateSubnet3:
-           Type: AWS::EC2::Subnet
-           Properties:
-               VpcId: !Ref VPC
-               AvailabilityZone: !Select [ 2, !GetAZs '' ]
-               CidrBlock: 10.0.6.0/24
-               MapPublicIpOnLaunch: false
-               Tags:
-                   - Key: Name
-                     Value: project-subnet-private3-us-east-1c
-   ```
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: project-subnet-public1-us-east-1a
 
-- We are creating a Public Route Table and its association for the Public Subnet:
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: project-subnet-public2-us-east-1b
 
-   ```yaml
-       PublicRouteTable:
-           Type: AWS::EC2::RouteTable
-           Properties:
-               VpcId: !Ref VPC
-               Tags:
-                   - Key: Name
-                     Value: project-rtb-public
-       DefaultPublicRoute:
-           Type: AWS::EC2::Route
-           DependsOn: InternetGatewayAttachment
-           Properties:
-               RouteTableId: !Ref PublicRouteTable
-               DestinationCidrBlock: 0.0.0.0/0
-               GatewayId: !Ref InternetGateway
-       PublicSubnet1RouteTableAssociation:
-           Type: AWS::EC2::SubnetRouteTableAssociation
-           Properties:
-               RouteTableId: !Ref PublicRouteTable
-               SubnetId: !Ref PublicSubnet1
-       PublicSubnet2RouteTableAssociation:
-           Type: AWS::EC2::SubnetRouteTableAssociation
-           Properties:
-               RouteTableId: !Ref PublicRouteTable
-               SubnetId: !Ref PublicSubnet2
-       PublicSubnet3RouteTableAssociation:
-           Type: AWS::EC2::SubnetRouteTableAssociation
-           Properties:
-               RouteTableId: !Ref PublicRouteTable
-               SubnetId: !Ref PublicSubnet3
-   ```
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: project-subnet-public3-us-east-1c
 
-- We create a NAT Gateway for the EIP and its association for the public subnet and Internet Gateway:
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.4.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: project-subnet-private1-us-east-1a
 
-   ```yaml
-       NATGateway1:
-           Type: AWS::EC2::NatGateway
-           Properties:
-               AllocationId: !GetAtt NATGateway1EIP.AllocationId
-               SubnetId: !Ref PublicSubnet1
-       NATGateway1EIP:
-           Type: AWS::EC2::EIP
-           DependsOn: InternetGatewayAttachment
-           Properties:
-               Domain: vpc
-   ```
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.5.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: project-subnet-private2-us-east-1b
 
-- Now we create a NAT Gateway and its association for the Private Subnet:
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.0.6.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: project-subnet-private3-us-east-1c
 
-   ```yaml
-       PrivateRouteTable1:
-           Type: AWS::EC2::RouteTable
-           Properties:
-               VpcId: !Ref VPC
-               Tags:
-                   - Key: Name
-                     Value: project-rtb-private1-us-east-1a
-       DefaultPrivateRoute1:
-           Type: AWS::EC2::Route
-           Properties:
-               RouteTableId: !Ref PrivateRouteTable1
-               DestinationCidrBlock: 0.0.0.0/0
-               NatGatewayId: !Ref NATGateway1
-       PrivateSubnet1RouteTableAssociation:
-           Type: AWS::EC2::SubnetRouteTableAssociation
-           Properties:
-               RouteTableId: !Ref PrivateRouteTable1
-               SubnetId: !Ref PrivateSubnet1
-   ```
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: project-rtb-public
 
-   (Repeat similar blocks for PrivateRouteTable2 and PrivateRouteTable3)
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
 
-- We will be creating the ECS and EFS security group and associate it with the VPC that we have just created. We will be opening port `8080` on the ECS security group for Jenkins and `2049` for the ECS Security group for the NFS file system of EFS, allowing `ALL` traffic in outbound:
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
 
-   ```yaml
-       ECSSecurityGroup:
-           Type: AWS::EC2::SecurityGroup
-           Properties:
-               GroupDescription: "ECS Security Group"
-               VpcId: !Ref VPC
-               SecurityGroupIngress:
-                   - IpProtocol: tcp
-                     FromPort: 8080
-                     ToPort: 8080
-                     CidrIp: 0.0.0.0/0
-               SecurityGroupEgress:
-                   - IpProtocol: "-1"
-                     CidrIp: 0.0.0.0/0
-       EFSSecurityGroup:
-           Type: AWS::EC2::SecurityGroup
-           Properties:
-               GroupDescription: "EFS Security Group"
-               VpcId: !Ref VPC
-               SecurityGroupIngress:
-                   - IpProtocol: tcp
-                     FromPort: 2049
-                     ToPort: 2049
-                     SourceSecurityGroupId: !Ref ECSSecurityGroup
-               SecurityGroupEgress:
-                   - IpProtocol: "-1"
-                     CidrIp: 0.0.0.0/0
-   ```
-- We will be creating  IAM policies and role for the ecs to execute  and efs mount 
-```yaml
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet3
+
+  NATGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NATGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: project-rtb-private1-us-east-1a
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+  
+
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: project-rtb-private2-us-east-1b
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: project-rtb-private3-us-east-1c
+
+  DefaultPrivateRoute3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      SubnetId: !Ref PrivateSubnet3
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "ECS Security Group"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "EFS Security Group"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref ECSSecurityGroup 
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
 
   # Policy for ECS Task
   ECSTaskPolicy:
     Type: AWS::IAM::Policy
     Properties:
-      PolicyName: ecstaskpolicy
+      PolicyName: !Sub "ECSExecutionTaskPolicy-${AWS::StackName}"
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -291,7 +312,7 @@ Parameters:
   EFSMountPolicy:
     Type: AWS::IAM::Policy
     Properties:
-      PolicyName: efsmountpolicy
+      PolicyName: !Sub "ECSMountPolicy-${AWS::StackName}"
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -306,32 +327,8 @@ Parameters:
           - Sid: AllowCreateAccessPoint
             Effect: Allow
             Action:
-              - elasticfilesystem:CreateAccessPoint
+              - elasticfilesystem:*
             Resource: "*"
-            Condition:
-              Null:
-                aws:RequestTag/efs.csi.aws.com/cluster: false
-              ForAllValues:StringEquals:
-                aws:TagKeys: efs.csi.aws.com/cluster
-          - Sid: AllowTagNewAccessPoints
-            Effect: Allow
-            Action:
-              - elasticfilesystem:TagResource
-            Resource: "*"
-            Condition:
-              StringEquals:
-                elasticfilesystem:CreateAction: CreateAccessPoint
-              Null:
-                aws:RequestTag/efs.csi.aws.com/cluster: false
-              ForAllValues:StringEquals:
-                aws:TagKeys: efs.csi.aws.com/cluster
-          - Sid: AllowDeleteAccessPoint
-            Effect: Allow
-            Action: elasticfilesystem:DeleteAccessPoint
-            Resource: "*"
-            Condition:
-              Null:
-                aws:ResourceTag/efs.csi.aws.com/cluster: false
       Roles:
         - !Ref ECSEFSmountTaskRole
 
@@ -339,7 +336,6 @@ Parameters:
   ECSEFSmountTaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: ECSEFSmountTaskRole
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -348,7 +344,7 @@ Parameters:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: ECSTaskPolicy
+        - PolicyName: !Sub "ECSTaskPolicy-${AWS::StackName}"
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -361,78 +357,54 @@ Parameters:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "*" 
-```
-- We will be creating the EFS file system:
-
-   ```yaml
-       EFSSystem:
-           Type: AWS::EFS::FileSystem
-           Properties:
-               Encrypted: true
-               FileSystemTags:
-                   - Key: Name
-                     Value: JenkinsEFS
-   ```
-
-- We need to mount the target for the EFS. For that, we will be using the public subnets `1, 2, 3` that we have just created:
-
-   ```yaml
-       JenkinsHomeVolume1:
-           Type: AWS::EFS::MountTarget
-           Properties:
-               FileSystemId: !Ref EFSSystem
-               SubnetId: !Ref PublicSubnet1
-               SecurityGroups:
-                   - !Ref EFSSecurityGroup
-       JenkinsHomeVolume2:
-           Type: AWS::EFS::MountTarget
-           Properties:
-               FileSystemId: !Ref EFSSystem
-               SubnetId: !Ref PublicSubnet2
-               SecurityGroups:
-                   - !Ref EFSSecurityGroup
-       JenkinsHomeVolume3:
-           Type: AWS::EFS::MountTarget
-           Properties:
-               FileSystemId: !Ref EFSSystem
-               SubnetId: !Ref PublicSubnet3
-               SecurityGroups:
-                   - !Ref EFSSecurityGroup
-   ```
-
-- We create an ECS cluster for our application:
-
-   ```yaml
-       ECSCluster:
-           Type: AWS::ECS::Cluster
-           Properties:
-               ClusterName: JenkinsCluster
-               CapacityProviders:
-                   - FARGATE
-                   - FARGATE_SPOT
-               DefaultCapacityProviderStrategy:
-                   - CapacityProvider: FARGATE
-                     Weight: 1
-                   - CapacityProvider: FARGATE_SPOT
-                     Weight: 1
-               Configuration:
-                   ExecuteCommandConfiguration:
-                       Logging: DEFAULT
-   ```
-
-- Create a Log group to fetch the log stream of EFS:
-
-   ```yaml
-       ECSLogGroup:
-           Type: AWS::Logs::LogGroup
-           Properties:
-               LogGroupName: !Sub "/ecs/test-${AWS::StackName}"
-               RetentionInDays: 7
-      
-   ```
-
-- **Now we are creating the ECS task definition. Comment the *CpuArchitecture* if you are using intel or amd chip (64-bit)** 
-   ```yaml
+  EFSSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      FileSystemTags:
+        - Key: Name
+          Value: JenkinsEFS
+  JenkinsHomeVolume1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+  JenkinsHomeVolume2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+  JenkinsHomeVolume3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSSystem
+      SubnetId: !Ref PublicSubnet3
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: JenkinsCluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 1
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
+  ECSLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub "/ecs/test-${AWS::StackName}"
+      RetentionInDays: 7
 
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -479,8 +451,6 @@ Parameters:
             RootDirectory: /
             TransitEncryption: ENABLED
 
-- Create a ecs service
-```yaml
   ECSService:
     Type: AWS::ECS::Service
     Properties:
@@ -510,18 +480,19 @@ Parameters:
         Type: ECS
       Tags: []
       EnableECSManagedTags: true
-  Outputs:
-    VPCID:
-      Description: The ID of the created VPC
-      Value: !Ref VPC
 
-    PublicSubnet1ID:
-      Description: The ID of Public Subnet 1
-      Value: !Ref PublicSubnet1
+Outputs:
+  VPCID:
+    Description: The ID of the created VPC
+    Value: !Ref VPC
 
-    PublicSubnet2ID:
-      Description: The ID of Public Subnet 2
-      Value: !Ref PublicSubnet2
+  PublicSubnet1ID:
+    Description: The ID of Public Subnet 1
+    Value: !Ref PublicSubnet1
+
+  PublicSubnet2ID:
+    Description: The ID of Public Subnet 2
+    Value: !Ref PublicSubnet2
 ```
 **Create the bash script and update the Repository Name, aws region and stack name if you desire and  `./jenkins/bash-script.sh` required**
 
@@ -565,7 +536,6 @@ aws cloudformation update-stack \
   --parameters ParameterKey=ImageURL,ParameterValue="${IMAGE_URI}" \
   --region "${AWS_REGION}"
 ```
-
 - Go to the AWS Console Dashboard navigate to Cloudformation and click on `jenkins-ecs-efs` see the creation process after stack creation is complete go to ecs click on service and click on task access jenkins with the public ip:8080
 # Deploying a Crash Management API with Ansible and Cloudformation and Automation Using Jenkins ECS with Jenkins Ec2 Agent and monitoring through Grafana, Promethues
 ### Prerequities
@@ -603,238 +573,15 @@ aws cloudformation update-stack \
 4. **Step 4**: Leave everything to default click on **Allocate**.
 5. **Step 5**: Click the ip you have just created copy the ip address and allocation id the allocation starts with `eipalloc-XXXXXXXXXXXX`
 
-#### Repeat the process for promethues and crash api server to create elastic ip
+#### Repeat the process for crash api server to create elastic ip
 
 - create a `cloudformation` folder in your root directory of your project  `mkdir cloudformation` inside cloudformation folder.
 - To create a `main.yaml` inside the cloudformation `touch ./cloudformation/main.yaml`
-- Inside the main.yaml paste the following
-```yaml
-AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS EC2 Backup Policy for Production Environment
-
-Parameters:
-  VPCID:
-    Type: AWS::EC2::VPC::Id
-    Description: The ID of the VPC where resources will be created
-    Default: vpc-056492ac3ce55afbc
-
-  PublicSubnet1:
-    Type: AWS::EC2::Subnet::Id
-    Description: The ID of the first public subnet for deploying resources
-    Default: subnet-0bf4035d161401304
-
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet::Id
-    Description: The ID of the second public subnet for deploying resources
-    Default: subnet-0c51f5611778a305e
-
-  GrafanaEIPAllocationId:
-    Type: String
-    Description: Allocation ID for Grafana's Elastic IP
-    Default: eipalloc-0b5062fd237b05d1b
-
-  CrashAppEIPAllocationId:
-    Type: String
-    Description: Allocation ID for CrashApp's Elastic IP
-    Default: eipalloc-06814b746932fa448
-```
-
-- To create the security group and open the required port for grafana promethues and application paste the following in `main.yaml` don't forget to replace the vpc id in `VpcId`
-```yaml
-Resources:
-  GrafanaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTP, HTTPS, and SSH to Grafana host
-      VpcId: !Ref VPCID
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
-
-  CrashAppSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow SSH to CrashApp host
-      VpcId: !Ref VPCID
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
-
-  EFSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow NFS traffic only from Grafana and CrashApp EC2 instances
-      VpcId: !Ref VPCID
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          SourceSecurityGroupId: !Ref GrafanaSecurityGroup
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          SourceSecurityGroupId: !Ref CrashAppSecurityGroup
-```
-
-- To create the ec2 instances for grafana, promethues and flask app  paste the following in `main.yaml` don't forget to replace the elastic ip allocation id in `AllocationId` and replace with the public subnet id that you have in your vpc
-
-```yaml
-
-  EfsFileSystem:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      PerformanceMode: generalPurpose
-      Encrypted: true
-
-  EfsMountTarget1:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PublicSubnet1
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  EfsMountTarget2:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PublicSubnet2
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  GrafanaInstance:
-    Type: AWS::EC2::Instance
-    DependsOn: EfsMountTarget1
-    Properties:
-      InstanceType: t3.medium
-      ImageId: ami-0e86e20dae9224db8
-      KeyName: TestKey
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: 20
-            VolumeType: gp2
-      NetworkInterfaces:
-        - AssociatePublicIpAddress: 'true'
-          DeviceIndex: '0'
-          SubnetId: !Ref PublicSubnet1
-          GroupSet:
-            - !Ref GrafanaSecurityGroup
-            - !Ref EFSSecurityGroup
-      UserData:
-        Fn::Base64: !Sub
-          - |
-            #!/bin/bash
-            exec > >(sudo tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-            sudo apt-get update
-            sudo apt-get install -y nfs-common
-            sudo mkdir -p /mnt/efs
-            
-            echo "Waiting for EFS to become available..."
-            while ! sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${EFSMountTargetIP}:/ /mnt/efs; do
-              sleep 10
-              echo "Retrying EFS mount..."
-            done
-            echo "${EFSMountTargetIP}:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" | sudo tee -a /etc/fstab
-            echo "EFS mount completed."
-          - EFSMountTargetIP: !GetAtt EfsMountTarget1.IpAddress
-      Tags:
-        - Key: Name
-          Value: GrafanaServer
-
-  CrashAppServer:
-    Type: AWS::EC2::Instance
-    DependsOn: EfsMountTarget2
-    Properties:
-      InstanceType: t3.micro
-      ImageId: ami-0e86e20dae9224db8
-      KeyName: TestKey
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: 20
-            VolumeType: gp3
-      NetworkInterfaces:
-        - AssociatePublicIpAddress: 'true'
-          DeviceIndex: '0'
-          SubnetId: !Ref PublicSubnet2
-          GroupSet:
-            - !Ref CrashAppSecurityGroup
-            - !Ref EFSSecurityGroup
-      UserData:
-        Fn::Base64: !Sub
-          - |
-            #!/bin/bash
-            exec > >(sudo tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-            sudo apt-get update
-            sudo apt-get install -y nfs-common
-            sudo mkdir -p /mnt/efs
-            
-            echo "Waiting for EFS to become available..."
-            while ! sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${EFSMountTargetIP}:/ /mnt/efs; do
-              sleep 10
-              echo "Retrying EFS mount..."
-            done
-            echo "${EFSMountTargetIP}:/ /mnt/efs nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev 0 0" | sudo tee -a /etc/fstab
-            echo "EFS mount completed."
-          - EFSMountTargetIP: !GetAtt EfsMountTarget2.IpAddress
-      Tags:
-        - Key: Name
-          Value: CrashAppServer
-
-  EIPAssociationGrafana:
-    Type: 'AWS::EC2::EIPAssociation'
-    Properties:
-      InstanceId: !Ref GrafanaInstance
-      AllocationId: !Ref GrafanaEIPAllocationId
-
-  EIPAssociationCrashApp:
-    Type: 'AWS::EC2::EIPAssociation'
-    Properties:
-      InstanceId: !Ref CrashAppServer
-      AllocationId: !Ref CrashAppEIPAllocationId
-
-Outputs:
-  EFSFileSystemId:
-    Description: The ID of the EFS file system
-    Value: !Ref EfsFileSystem
+- Inside the main.yaml paste the following make sure to replace elastic ip allocation id in cloudformation template
+  ```yaml
   
+  ```
 
-  EFSMountTarget1IP:
-    Description: IP Address of EFS Mount Target 1
-    Value: !GetAtt EfsMountTarget1.IpAddress
-
-  EFSMountTarget2IP:
-    Description: IP Address of EFS Mount Target 2
-    Value: !GetAtt EfsMountTarget2.IpAddress
-
-  CrashAppPublicIP:
-    Description: Public IP of the CrashApp instance 
-    Value: !GetAtt CrashAppServer.PublicIp
-
-  GrafanaPublicIP:
-    Description: Public IP of the Grafana instance
-    Value: !GetAtt GrafanaInstance.PublicIp
-              
-```
 
 - **Now we create the individual configuration to setup the server configuration using ansible and we will use ansible roles**
 
